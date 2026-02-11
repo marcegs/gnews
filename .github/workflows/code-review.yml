@@ -1,32 +1,74 @@
-name: AI Code Review
+name: Gemini Flash Code Review
+
+permissions:
+  contents: read
+  pull-requests: write
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, reopened]
 
 jobs:
   review:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write # Necessário para comentar no PR
     steps:
-      - name: Checkout Repo
+      - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: AI Reviewer
-        uses: anc95/ChatGPT-CodeReview@main # Action que orquestra a revisão
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Google GenAI SDK
+        run: pip install -q google-generativeai
+
+      - name: Review PR with Gemini Flash
         env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.AI_API_KEY }} # Funciona com Gemini via proxy ou OpenAI nativo
-          LANGUAGE: Portuguese
-          MODEL: gpt-4o # Ajuste para o modelo configurado
-          PROMPT: |
-            Aja como um Engenheiro de Segurança Sênior (DevSecOps). 
-            Analise o DIFF deste Pull Request buscando:
-            1. Vulnerabilidades OWASP Top 10 (especialmente SQL Injection e Insecure Deserialization).
-            2. Code Smells e complexidade ciclomática desnecessária.
-            3. Aderência às melhores práticas de Java 25 e Spring Boot 3.4.
-            4. Responda com comentários técnicos e construtivos diretamente nas linhas do código afetado.
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          python -c "
+          import os
+          import subprocess
+          import google.generativeai as genai
+
+          # 1. Get the Diff from GitHub CLI
+          print(f'Fetching diff for PR #{os.environ[\"PR_NUMBER\"]}...')
+          pr_diff = subprocess.check_output(
+              ['gh', 'pr', 'diff', os.environ['PR_NUMBER']], 
+              text=True
+          )
+
+          # Stop if diff is too large (to avoid token limits)
+          if len(pr_diff) > 100000:
+              print('Diff is too large for a quick review. Skipping.')
+              exit(0)
+
+          # 2. Configure Gemini
+          genai.configure(api_key=os.environ['GEMINI_API_KEY'])
+          model = genai.GenerativeModel('gemini-1.5-flash')
+
+          prompt = f'''
+          You are a senior code reviewer. Review the following git diff.
+          Focus on potential bugs, security issues, and code improvements.
+          Be concise and use markdown.
+          
+          Diff:
+          {pr_diff}
+          '''
+
+          # 3. Generate Review
+          print('Sending to Gemini...')
+          response = model.generate_content(prompt)
+          review_text = response.text.replace('\"', '\\\"') # Escape quotes for shell
+
+          # 4. Post Comment back to PR using GitHub CLI
+          print('Posting comment...')
+          subprocess.run(
+              ['gh', 'pr', 'comment', os.environ['PR_NUMBER'], '--body', response.text],
+              check=True
+          )
+          "
