@@ -1,21 +1,19 @@
 name: Gemini AI Code Reviewer
 
 on:
-  issue_comment:
-    types: [created]
+  pull_request:
+    types: [opened]
 
 permissions: write-all
 
 jobs:
   gemini-code-review:
     runs-on: ubuntu-latest
-    if: |
-      github.event.issue.pull_request
     steps:
       - name: PR Info
         run: |
-          echo "Comment: ${{ github.event.comment.body }}"
-          echo "Issue Number: ${{ github.event.issue.number }}"
+          echo "Pull Request: ${{ github.event.pull_request.title }}"
+          echo "Description: ${{ github.event.pull_request.body }}"
           echo "Repository: ${{ github.repository }}"
 
       - name: Checkout Repo
